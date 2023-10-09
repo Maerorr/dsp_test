@@ -1,4 +1,4 @@
-use fundsp::{audionode::AudioNode, prelude::{An, tan}};
+use fundsp::{audionode::AudioNode, prelude::An};
 use numeric_array::typenum::{*, self};
 use rand::Rng;
 
