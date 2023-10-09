@@ -1,8 +1,9 @@
+use circular_buffer::CircularBuffer;
 use fundsp::{audionode::AudioNode, prelude::An};
 use numeric_array::typenum::{*, self};
 use rand::Rng;
 
-const MAX_INDEX: usize = 64;
+const MAX_INDEX: usize = 5000;
 
 #[derive(Clone, Copy)]
 pub enum CombType {
@@ -10,9 +11,9 @@ pub enum CombType {
     NEGATIVE,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct CombFilter {
-    buffer: [f64; MAX_INDEX],
+    buffer: Box<CircularBuffer::<MAX_INDEX, f64>>,
     buffer_index: usize,
     delay: usize,
     feedback: f64,
@@ -30,8 +31,13 @@ impl CombFilter {
         } else {
             feedback
         };
+
+        let mut buffer = CircularBuffer::<MAX_INDEX, f64>::boxed();
+        for _ in 0..MAX_INDEX {
+            buffer.push_back(0.0);
+        }
         Self {
-            buffer: [0.0; MAX_INDEX],
+            buffer: buffer,
             buffer_index: 0,
             delay,
             feedback,
@@ -55,7 +61,7 @@ impl AudioNode for CombFilter {
             &mut self,
             input: &fundsp::prelude::Frame<Self::Sample, Self::Inputs>,
         ) -> fundsp::prelude::Frame<Self::Sample, Self::Outputs> {
-        let delayed_sample = self.buffer[self.buffer_index];
+        let delayed_sample = self.buffer.get(self.delay).unwrap();
         let mut y = 0.0f64;
         match self.comb_type {
             CombType::POSITIVE => {
@@ -65,7 +71,7 @@ impl AudioNode for CombFilter {
                 y = input[0] - delayed_sample * self.feedback;
             }
         }
-        self.buffer[self.buffer_index] = y;
+        self.buffer.push_front(y);
         self.buffer_index = (self.buffer_index + 1) % self.delay;
         [y].into()
     }

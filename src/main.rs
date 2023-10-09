@@ -15,7 +15,7 @@ const INPUT_DIR: &str= "res/input/";
 const OUTPUT_DIR: &str = "res/output/";
 
 fn main() {
-    let saw_wave = Wave64::load(INPUT_DIR.to_string() + "cello.wav").expect("Could not load wave file.");
+    let saw_wave = Wave64::load(INPUT_DIR.to_string() + "drum_loop_tail.wav").expect("Could not load wave file.");
     println!("{}", saw_wave.len() as f64 / saw_wave.sample_rate());
 
     // test: 550Hz LPF, 15.707Q, gain 1
@@ -45,27 +45,26 @@ fn main() {
     let output = saw_wave.filter(
         saw_wave.len() as f64 / saw_wave.sample_rate(),
          &mut ( 
-            my_chorus(saw_wave.sample_rate(), 20.0, 0.1, 10.0, 1.0)
-            >>my_allpass(40000, 0.1)
-            >>my_allpass(512, 0.1)
-            >>my_allpass(1024, 0.2)
-            >>my_allpass(2048, 0.3)
-            >>my_allpass(4096, 0.4)
-            >>my_allpass(8196, 0.5)
-            >>my_chorus(saw_wave.sample_rate(), 10.0, 0.1, 5.0, 0.5)
-            >>my_allpass(16384, 0.6)
-            >>my_allpass(32768, 0.8)
-            >>lpf(saw_wave.sample_rate() as f32, 4000.0)
-            >>my_chorus(saw_wave.sample_rate(), 20.0, 0.1, 25.0, 0.6)
-            >>mul(10.0)
-            >>my_allpass(1024, 0.4)
-            >>my_allpass(2048, 0.5)
-            >>my_allpass(4096, 0.6)
-            >>my_chorus(saw_wave.sample_rate(), 10.0, 0.1, 5.0, 0.7)
-            >>my_allpass(8196, 0.7)
-            >>my_allpass(16384, 0.8)
-            >>mul(5.0)
-            >>clip()
+                (pass() &
+                    my_allpass(2000, 0.7)
+                    >> my_allpass(1000, 0.7)
+                    >> my_allpass(5000, 0.7)
+                    >> my_chorus(saw_wave.sample_rate(), 5.0, 0.2, 3.0, 0.7)
+                    >>
+                        (
+                            my_comb(1687, 0.83, CombType::POSITIVE)
+                            &
+                            my_comb(1601, 0.71, CombType::POSITIVE)
+                            &
+                            my_comb(2053, 0.73, CombType::POSITIVE)
+                            &
+                            my_comb(2251, 0.75, CombType::POSITIVE)
+                        )
+                        >>
+                    my_allpass(500, 0.7)
+                    >> my_allpass(113, 0.7)
+                    >> my_allpass(1000, 0.7) * 0.4
+                ) 
             //((pass() | lfo(|t| (xerp11(110.0, 880.0, spline_noise(0, t * 5.0)), 1.0))) >> bandpass())
             )
         );
