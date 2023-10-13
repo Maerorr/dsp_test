@@ -37,6 +37,18 @@ impl AllPass {
             gain: gain,
         }
     }
+
+    pub fn process_sample(&mut self, x: f64) -> f64 {
+        let y = 
+        -self.gain * x 
+        + self.x_buffer.get(self.delay).unwrap() 
+        + self.gain * self.y_buffer.get(self.delay).unwrap();
+
+        self.x_buffer.push_front(x);
+        self.y_buffer.push_front(y);
+
+        y
+    }
 }
 
 impl AudioNode for AllPass {
@@ -56,6 +68,7 @@ impl AudioNode for AllPass {
             input: &fundsp::prelude::Frame<Self::Sample, Self::Inputs>,
         ) -> fundsp::prelude::Frame<Self::Sample, Self::Outputs> {
         let x = input[0] as f64;
+        
         let y = 
         -self.gain * x 
         + self.x_buffer.get(self.delay).unwrap() 

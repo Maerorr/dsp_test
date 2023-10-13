@@ -1,68 +1,83 @@
-use fundsp::{audionode::AudioNode, prelude::{An, tan}, buffer};
+use fundsp::{audionode::AudioNode, prelude::{An, tan}, buffer, feedback};
 use numeric_array::typenum::{*, self};
 use rand::Rng;
 use circular_buffer::CircularBuffer;
+
+use crate::delay::{Delay, self};
 
 const MAX_DELAY: f64 = 100.0;
 
 #[derive(Clone)]
 pub struct Chorus {
-    depth: f64,
     rate: f64,
     delay_ms: f64,
     mix: f64,
     sample_rate: f64,
     delay_samples: usize,
-    delay_buffer1: Box<CircularBuffer::<10000, f64>>,
-    delay_buffer2: Box<CircularBuffer::<10000, f64>>,
-    delay_buffer3: Box<CircularBuffer::<10000, f64>>,
+    delay_1: Delay,
+    delay_2: Delay,
+    delay_3: Delay,
     phase1: f64,
     phase2: f64,
     phase3: f64,
     calculated_depth: f64,
+    feedback: f64,
+    // 3 second buffer at 44.1khz
+    buffer: Box<CircularBuffer::<{3*44100}, f64>>,
+    count: usize,
 }
 
 
 impl Chorus {
     //time represented in ms. sr is sample rate
-    fn new(sample_rate: f64, depth: f64, rate: f64, delay_ms: f64, mix: f64) -> Chorus {
+    fn new(sample_rate: f64, depth: f64, rate: f64, delay_ms: f64, mix: f64, feedback: f64) -> Chorus {
         // convert delay time from ms to samples
-        let delay_samples = (delay_ms * sample_rate / 1000.0) as usize;
-        println!("delay_samples: {}", delay_samples);
-        // create a new circular buffer and fill it with 0's
-        let mut delay_buffer1 = Box::new(CircularBuffer::<10000, f64>::new());
-        for _ in 0..10000 {
-            delay_buffer1.push_back(0.0);
-        }
-        let mut delay_buffer2 = Box::new(CircularBuffer::<10000, f64>::new());
-        for _ in 0..10000 {
-            delay_buffer2.push_back(0.0);
-        }
-        let mut delay_buffer3 = Box::new(CircularBuffer::<10000, f64>::new());
-        for _ in 0..10000 {
-            delay_buffer3.push_back(0.0);
-        }
+        let delay_samples: usize = ((delay_ms / 1000.0) * sample_rate) as usize;
+        
+        // delay lines
+        let delay_1 = Delay::new(delay_samples, 0.0);
+        let delay_2 = Delay::new(delay_samples, 0.0);
+        let delay_3 = Delay::new(delay_samples, 0.0);
+
         // generate3 random phase offsets in (0, 2pi)
         let mut rng = rand::thread_rng();
-        let phase1 = rng.gen_range(0.0..2.0 * std::f64::consts::PI);
+        let phase1 = 0.0;//rng.gen_range(0.0..2.0 * std::f64::consts::PI);
         let phase2 = rng.gen_range(0.0..2.0 * std::f64::consts::PI);
         let phase3 = rng.gen_range(0.0..2.0 * std::f64::consts::PI);
         
-        let calculated_depth = depth * sample_rate / 1000.0;
+        let mut calculated_depth = depth * sample_rate / 1000.0;
+        if calculated_depth > delay_samples as f64 {
+            println!("calculated_depth too high. Setting to delay_samples/2");
+            calculated_depth = delay_samples as f64 / 2.0;
+        }
+        println!("base delay: {} samples", delay_samples);
+        println!("calculated depth: {} samples", calculated_depth);
+        println!("min depth: {} samples", delay_samples as f64 - calculated_depth);
+        println!("max depth: {} samples", delay_samples as f64 + calculated_depth);
+
+        let feedback = feedback.clamp(0.0, 0.9999);
+
+        let mut buffer = CircularBuffer::<{3*44100}, f64>::boxed();
+        for _ in 0..(3*44100) {
+            buffer.push_back(0.0);
+        }
+
         Chorus {
-            depth,
             rate,
             delay_ms,
             mix,
             sample_rate,
             delay_samples,
-            delay_buffer1: delay_buffer1,
-            delay_buffer2: delay_buffer2,
-            delay_buffer3: delay_buffer3,
+            delay_1: delay_1,
+            delay_2: delay_2,
+            delay_3: delay_3,
             phase1: phase1,
             phase2: phase2,
             phase3: phase3,
             calculated_depth,
+            feedback,
+            buffer,
+            count: 0,
         }
     }
 }
@@ -99,26 +114,33 @@ impl AudioNode for Chorus {
             self.phase3 -= 2.0 * std::f64::consts::PI;
         }
         
-        let offset1 = ((self.phase1.sin() + 1.0) * self.calculated_depth).round() as usize;
-        let offset2 = ((self.phase2.sin() + 1.0) * self.calculated_depth).round() as usize;
-        let offset3 = ((self.phase3.sin() + 1.0) * self.calculated_depth).round() as usize;
+        let offset1 = ((self.phase1.sin()) * self.calculated_depth / 2.0).round() as i32;
+        let offset2 = ((self.phase2.sin()) * self.calculated_depth / 2.0).round() as i32;
+        let offset3 = ((self.phase3.sin()) * self.calculated_depth / 2.0).round() as i32;
+        //println!("sample: {}, offset1: {}", self.count, offset1);
         
+        let new_x = x + self.feedback * self.buffer.get(self.delay_samples).unwrap();
+        //println!("sample: {}, delay: {}", self.count, (self.delay_samples as i32 + offset1));
         // mix * (1/3) * (delay1 + delay2 + delay3) + (1 - mix) * x
         let y = 
         self.mix * 1.0/3.0 * (
-            self.delay_buffer1.get(offset1).unwrap() + 
-            self.delay_buffer2.get(offset2).unwrap() +
-            self.delay_buffer3.get(offset3).unwrap()
-        ) + (1.0 - self.mix) * x;
+            self.delay_1.process_sample(new_x, (self.delay_samples as i32 + offset1) as usize)
+            + self.delay_2.process_sample(new_x, (self.delay_samples as i32 + offset2) as usize)
+            + self.delay_3.process_sample(new_x, (self.delay_samples as i32 + offset3) as usize)
+        ) + new_x;
 
-        self.delay_buffer1.push_front(x);
-        self.delay_buffer2.push_front(x);
-        self.delay_buffer3.push_front(x);
-
+        self.buffer.push_front(y);
+        self.count += 1;
         [y].into()
     }
 }
 
-pub fn my_chorus(sample_rate: f64, depth: f64, rate: f64, delay_ms: f64, mix: f64) -> An<Chorus> {
-    An(Chorus::new(sample_rate, depth, rate, delay_ms, mix))
+/// created a new chorus effect where:
+///- depth is in ms
+///- rate is in Hz
+///- delay is in ms
+///- mix is in [0, 1]
+///- feedback is in [0, 0.9999]
+pub fn my_chorus(sample_rate: f64, depth: f64, rate: f64, delay_ms: f64, mix: f64, feedback: f64) -> An<Chorus> {
+    An(Chorus::new(sample_rate, depth, rate, delay_ms, mix, feedback))
 }
